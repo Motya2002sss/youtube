@@ -1,27 +1,44 @@
 from __future__ import annotations
 
+import hashlib
 import math
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
 try:
-    from moviepy import AudioFileClip, ImageClip, concatenate_videoclips, vfx
+    from moviepy import (
+        AudioFileClip,
+        CompositeVideoClip,
+        ImageClip,
+        VideoFileClip,
+        concatenate_videoclips,
+        vfx,
+    )
 except ImportError:  # MoviePy 1.x
-    from moviepy.editor import AudioFileClip, ImageClip, concatenate_videoclips, vfx
+    from moviepy.editor import (
+        AudioFileClip,
+        CompositeVideoClip,
+        ImageClip,
+        VideoFileClip,
+        concatenate_videoclips,
+        vfx,
+    )
 
 
 VIDEO_SIZE = (1080, 1920)
 FPS = 30
 BACKGROUND = (12, 15, 22)
 TEXT_COLOR = (245, 247, 250)
-MUTED_TEXT = (155, 164, 178)
+SUBTITLE_BOX = (8, 10, 16, 214)
+MUTED = (155, 164, 178)
 ACCENT_COLORS = [
     (85, 196, 255),
     (255, 190, 92),
     (131, 236, 164),
     (255, 132, 161),
+    (182, 151, 255),
 ]
 
 
@@ -92,13 +109,13 @@ def _fit_text(
     text: str,
     max_width: int,
     max_height: int,
-    max_font_size: int = 96,
-    min_font_size: int = 52,
+    max_font_size: int = 88,
+    min_font_size: int = 42,
 ) -> tuple[ImageFont.ImageFont, list[str], int]:
     for font_size in range(max_font_size, min_font_size - 1, -2):
         font = _load_font(font_size, bold=True)
         lines = _wrap_text(draw, text, font, max_width)
-        line_height = math.ceil(font_size * 1.2)
+        line_height = math.ceil(font_size * 1.18)
         total_height = line_height * len(lines)
         widest = max(_text_size(draw, line, font)[0] for line in lines)
 
@@ -107,76 +124,40 @@ def _fit_text(
 
     font = _load_font(min_font_size, bold=True)
     lines = _wrap_text(draw, text, font, max_width)
-    return font, lines, math.ceil(min_font_size * 1.2)
+    return font, lines, math.ceil(min_font_size * 1.18)
 
 
-def _draw_background(draw: ImageDraw.ImageDraw, scene_index: int) -> None:
-    width, height = VIDEO_SIZE
-    accent = ACCENT_COLORS[scene_index % len(ACCENT_COLORS)]
-
-    draw.rectangle((0, 0, width, height), fill=BACKGROUND)
-    draw.rectangle((0, 0, width, 20), fill=accent)
-    draw.rounded_rectangle((70, 1650, 1010, 1662), radius=6, fill=(34, 39, 51))
-    draw.rounded_rectangle((70, 1650, 70 + 160 + scene_index * 18, 1662), radius=6, fill=accent)
-
-    # A very subtle visual anchor so the frame does not look empty.
-    draw.ellipse((760, 90, 1280, 610), outline=(28, 34, 48), width=6)
-    draw.ellipse((-230, 1270, 270, 1770), outline=(28, 34, 48), width=6)
-
-
-def create_scene_image(
-    text: str,
-    image_path: Path,
-    scene_index: int,
-    total_scenes: int,
-) -> Path:
-    image_path.parent.mkdir(parents=True, exist_ok=True)
-
-    image = Image.new("RGB", VIDEO_SIZE, BACKGROUND)
-    draw = ImageDraw.Draw(image)
-    _draw_background(draw, scene_index)
-
-    max_text_width = 900
-    max_text_height = 940
-    font, lines, line_height = _fit_text(draw, text, max_text_width, max_text_height)
-
-    total_height = line_height * len(lines)
-    y = (VIDEO_SIZE[1] - total_height) // 2 - 40
-
-    for line in lines:
-        width, _ = _text_size(draw, line, font)
-        x = (VIDEO_SIZE[0] - width) // 2
-        draw.text((x + 4, y + 4), line, font=font, fill=(0, 0, 0))
-        draw.text((x, y), line, font=font, fill=TEXT_COLOR)
-        y += line_height
-
-    small_font = _load_font(34, bold=False)
-    footer = f"{scene_index + 1}/{total_scenes}"
-    draw.text((70, 1700), footer, font=small_font, fill=MUTED_TEXT)
-
-    image.save(image_path, quality=95)
-    return image_path
-
-
-def _with_duration(clip: ImageClip, duration: float) -> ImageClip:
+def _clip_with_duration(clip: Any, duration: float) -> Any:
     if hasattr(clip, "with_duration"):
         return clip.with_duration(duration)
     return clip.set_duration(duration)
 
 
-def _with_fps(clip: ImageClip, fps: int) -> ImageClip:
+def _clip_with_fps(clip: Any, fps: int) -> Any:
     if hasattr(clip, "with_fps"):
         return clip.with_fps(fps)
     return clip.set_fps(fps)
 
 
-def _with_audio(clip, audio):
+def _clip_with_audio(clip: Any, audio: Any) -> Any:
     if hasattr(clip, "with_audio"):
         return clip.with_audio(audio)
     return clip.set_audio(audio)
 
 
-def _apply_fades(clip: ImageClip, fade_duration: float = 0.25) -> ImageClip:
+def _clip_with_start(clip: Any, start: float) -> Any:
+    if hasattr(clip, "with_start"):
+        return clip.with_start(start)
+    return clip.set_start(start)
+
+
+def _clip_with_position(clip: Any, position: tuple[str, str]) -> Any:
+    if hasattr(clip, "with_position"):
+        return clip.with_position(position)
+    return clip.set_position(position)
+
+
+def _apply_fades(clip: Any, fade_duration: float = 0.2) -> Any:
     try:
         if hasattr(clip, "with_effects") and hasattr(vfx, "FadeIn"):
             return clip.with_effects([vfx.FadeIn(fade_duration), vfx.FadeOut(fade_duration)])
@@ -189,79 +170,162 @@ def _apply_fades(clip: ImageClip, fade_duration: float = 0.25) -> ImageClip:
     return clip
 
 
-def _safe_duration(value: object, default: int = 4) -> int:
+def _accent_from_prompt(scene_prompt: str) -> tuple[int, int, int]:
+    digest = hashlib.sha256(scene_prompt.encode("utf-8")).digest()
+    return ACCENT_COLORS[digest[0] % len(ACCENT_COLORS)]
+
+
+def _create_local_background(scene_prompt: str, image_path: Path) -> Path:
+    """Create a simple no-text visual placeholder for a scene provider fallback."""
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+
+    image = Image.new("RGB", VIDEO_SIZE, BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    accent = _accent_from_prompt(scene_prompt)
+
+    draw.rectangle((0, 0, VIDEO_SIZE[0], VIDEO_SIZE[1]), fill=BACKGROUND)
+    draw.rectangle((0, 0, VIDEO_SIZE[0], 18), fill=accent)
+    draw.ellipse((720, 110, 1280, 670), outline=(28, 34, 48), width=8)
+    draw.ellipse((-260, 1180, 360, 1800), outline=(28, 34, 48), width=8)
+    draw.rounded_rectangle((120, 520, 960, 1300), radius=42, fill=(18, 23, 34))
+    draw.rounded_rectangle((170, 610, 910, 910), radius=36, fill=(29, 36, 51))
+    draw.rounded_rectangle((250, 1000, 830, 1110), radius=26, fill=accent)
+    draw.rounded_rectangle((330, 1170, 750, 1240), radius=20, fill=(42, 50, 67))
+
+    # Do not render prompt text here. Providers generate visuals only;
+    # captions are composited later as controlled subtitles.
+    image.save(image_path, quality=95)
+    return image_path
+
+
+def create_local_scene_video(
+    scene_prompt: str,
+    duration: int,
+    output_path: str | Path,
+) -> str:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    image_path = output_path.with_suffix(".png")
+    _create_local_background(scene_prompt, image_path)
+
+    clip = None
     try:
-        duration = int(float(value))
-    except (TypeError, ValueError):
-        return default
-    return max(3, min(6, duration))
-
-
-def _normalize_scenes(scenes: Iterable[dict]) -> list[dict]:
-    normalized: list[dict] = []
-
-    for scene in scenes:
-        if not isinstance(scene, dict):
-            continue
-
-        text = str(scene.get("text", "")).strip()
-        if not text:
-            continue
-
-        normalized.append(
-            {
-                "text": text,
-                "duration": _safe_duration(scene.get("duration", 4)),
-            }
+        clip = ImageClip(str(image_path))
+        clip = _clip_with_duration(clip, float(duration))
+        clip = _clip_with_fps(clip, FPS)
+        clip = _apply_fades(clip)
+        clip.write_videofile(
+            str(output_path),
+            fps=FPS,
+            codec="libx264",
+            audio=False,
+            threads=4,
+            logger=None,
         )
+    finally:
+        if clip is not None:
+            clip.close()
 
-    if not normalized:
-        raise ValueError("No valid scenes for video generation.")
-
-    return normalized
+    return str(output_path)
 
 
-def build_video(
-    scenes: list[dict],
+def _create_subtitle_overlay(caption: str, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    image = Image.new("RGBA", VIDEO_SIZE, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    box_left = 70
+    box_right = VIDEO_SIZE[0] - 70
+    box_top = 1180
+    box_bottom = 1510
+    max_text_width = box_right - box_left - 80
+    max_text_height = box_bottom - box_top - 70
+
+    font, lines, line_height = _fit_text(
+        draw,
+        caption,
+        max_text_width,
+        max_text_height,
+        max_font_size=82,
+        min_font_size=40,
+    )
+
+    draw.rounded_rectangle(
+        (box_left, box_top, box_right, box_bottom),
+        radius=28,
+        fill=SUBTITLE_BOX,
+        outline=(72, 82, 104, 230),
+        width=2,
+    )
+
+    total_height = line_height * len(lines)
+    y = box_top + ((box_bottom - box_top) - total_height) // 2
+
+    for line in lines:
+        width, _ = _text_size(draw, line, font)
+        x = (VIDEO_SIZE[0] - width) // 2
+        draw.text((x + 3, y + 3), line, font=font, fill=(0, 0, 0, 190))
+        draw.text((x, y), line, font=font, fill=TEXT_COLOR)
+        y += line_height
+
+    image.save(output_path)
+    return output_path
+
+
+def concatenate_clips_with_subtitles(
+    clip_paths: list[str | Path],
+    scenes: list[dict[str, Any]],
     audio_path: str | Path,
     output_path: str | Path,
     temp_dir: str | Path,
 ) -> Path:
-    """Build a vertical Shorts video from Pillow-generated scene images."""
-    audio_path = Path(audio_path)
+    """Concatenate provider clips, add Pillow subtitles, attach voice-over."""
     output_path = Path(output_path)
     temp_dir = Path(temp_dir)
+    audio_path = Path(audio_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    normalized_scenes = _normalize_scenes(scenes)
-    clips = []
+    scene_clips = []
+    overlays = []
     audio = None
+    base_clip = None
     final_clip = None
 
     try:
+        for clip_path in clip_paths:
+            scene_clips.append(VideoFileClip(str(clip_path)))
+
+        base_clip = concatenate_videoclips(scene_clips, method="compose")
+        timeline = 0.0
+
+        for index, scene in enumerate(scenes):
+            caption = str(scene.get("caption") or scene.get("text") or "").strip()
+            duration = float(scene.get("duration", 4))
+            if not caption:
+                timeline += duration
+                continue
+
+            overlay_path = temp_dir / f"subtitle_{index + 1:02d}.png"
+            _create_subtitle_overlay(caption, overlay_path)
+
+            try:
+                overlay = ImageClip(str(overlay_path), transparent=True)
+            except TypeError:
+                overlay = ImageClip(str(overlay_path))
+
+            overlay = _clip_with_start(overlay, timeline)
+            overlay = _clip_with_duration(overlay, duration)
+            overlay = _clip_with_position(overlay, ("center", "center"))
+            overlays.append(overlay)
+            timeline += duration
+
+        final_clip = CompositeVideoClip([base_clip, *overlays], size=VIDEO_SIZE)
+
         audio = AudioFileClip(str(audio_path))
-        scene_duration = sum(scene["duration"] for scene in normalized_scenes)
-
-        if audio.duration and audio.duration > scene_duration:
-            extra_time = min(8, audio.duration - scene_duration + 0.3)
-            normalized_scenes[-1]["duration"] += extra_time
-
-        total_scenes = len(normalized_scenes)
-
-        for index, scene in enumerate(normalized_scenes):
-            image_path = temp_dir / f"scene_{index + 1:02d}.png"
-            create_scene_image(scene["text"], image_path, index, total_scenes)
-
-            clip = ImageClip(str(image_path))
-            clip = _with_duration(clip, float(scene["duration"]))
-            clip = _with_fps(clip, FPS)
-            clip = _apply_fades(clip)
-            clips.append(clip)
-
-        final_clip = concatenate_videoclips(clips, method="compose")
-        final_clip = _with_audio(final_clip, audio)
-
+        final_clip = _clip_with_audio(final_clip, audio)
         final_clip.write_videofile(
             str(output_path),
             fps=FPS,
@@ -275,7 +339,11 @@ def build_video(
     finally:
         if final_clip is not None:
             final_clip.close()
-        for clip in clips:
-            clip.close()
+        if base_clip is not None:
+            base_clip.close()
+        for overlay in overlays:
+            overlay.close()
+        for scene_clip in scene_clips:
+            scene_clip.close()
         if audio is not None:
             audio.close()

@@ -11,7 +11,8 @@ from openai import OpenAI
 
 from prompts import SYSTEM_PROMPT, build_user_prompt
 from tts import DEFAULT_VOICE, generate_tts
-from video_generator import build_video
+from video_generator import concatenate_clips_with_subtitles
+from video_provider import get_video_provider
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -21,9 +22,16 @@ TEMP_DIR = PROJECT_DIR / "temp"
 TOPIC = "Почему цена 999 кажется дешевле, чем 1000?"
 OUTPUT_STEM = "short_001"
 DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_VIDEO_PROVIDER = "local_simple"
+DEFAULT_STYLE_PROMPT = (
+    "3D cartoon style, colorful commercial video, vertical 9:16, smooth camera movement, "
+    "bright retail and money psychology visuals, consistent characters and lighting"
+)
+NO_TEXT_PROMPT = "no text, no letters, no numbers, no subtitles, no logos"
 FALLBACK_SCRIPT = {
     "title": "Почему 999 кажется дешевле?",
     "description": "Коротко о том, почему цена 999 воспринимается легче, чем 1000.",
+    "style_prompt": DEFAULT_STYLE_PROMPT,
     "voice_text": (
         "Почему девятьсот девяносто девять кажется дешевле, чем тысяча? "
         "Мозг читает цену слева направо. Первая цифра девять, а не десять, "
@@ -35,13 +43,62 @@ FALLBACK_SCRIPT = {
         "выгодная покупка."
     ),
     "scenes": [
-        {"text": "Почему 999 кажется дешевле?", "duration": 4},
-        {"text": "Мозг читает цену слева", "duration": 4},
-        {"text": "Первая цифра решает ощущение", "duration": 5},
-        {"text": "1000 звучит как крупная сумма", "duration": 5},
-        {"text": "999 выглядит почти выгодно", "duration": 5},
-        {"text": "Разница всего один рубль", "duration": 4},
-        {"text": "Смотри на реальную сумму", "duration": 5},
+        {
+            "caption": "Почему 999 кажется дешевле?",
+            "scene_prompt": (
+                "A young shopper in a bright supermarket aisle looks surprised at a blank "
+                f"price tag, colorful, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
+            ),
+            "duration": 4,
+        },
+        {
+            "caption": "Мозг читает цену слева",
+            "scene_prompt": (
+                "A close-up of eyes scanning a product shelf from left to right, retail "
+                f"psychology mood, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
+            ),
+            "duration": 4,
+        },
+        {
+            "caption": "Первая цифра решает ощущение",
+            "scene_prompt": (
+                "A shopper compares two similar products with blank labels and reacts "
+                f"emotionally, colorful store background, vertical video, {NO_TEXT_PROMPT}"
+            ),
+            "duration": 5,
+        },
+        {
+            "caption": "1000 звучит как крупная сумма",
+            "scene_prompt": (
+                "A large abstract coin stack feels heavy and serious beside a shopping "
+                f"basket, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
+            ),
+            "duration": 5,
+        },
+        {
+            "caption": "999 выглядит почти выгодно",
+            "scene_prompt": (
+                "A shopper smiles at a product with a blank discount-style tag, bright "
+                f"supermarket aisle, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
+            ),
+            "duration": 5,
+        },
+        {
+            "caption": "Разница всего один рубль",
+            "scene_prompt": (
+                "Two nearly identical products sit side by side while a small coin falls "
+                f"between them, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
+            ),
+            "duration": 4,
+        },
+        {
+            "caption": "Смотри на реальную сумму",
+            "scene_prompt": (
+                "A shopper pauses, thinks, and checks a shopping basket calmly before buying, "
+                f"colorful retail scene, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
+            ),
+            "duration": 5,
+        },
     ],
 }
 
@@ -95,6 +152,21 @@ def _safe_duration(value: Any, default: int = 4) -> int:
     return max(3, min(6, duration))
 
 
+def _ensure_no_text_prompt(scene_prompt: str) -> str:
+    lowered = scene_prompt.lower()
+    required_parts = ["no text", "no letters", "no numbers", "no subtitles", "no logos"]
+    missing_parts = [part for part in required_parts if part not in lowered]
+
+    if not missing_parts:
+        return scene_prompt
+
+    return f"{scene_prompt.rstrip(' .')}, {', '.join(missing_parts)}"
+
+
+def build_provider_scene_prompt(style_prompt: str, scene_prompt: str) -> str:
+    return _ensure_no_text_prompt(f"{style_prompt.rstrip(' .')}. {scene_prompt.strip()}")
+
+
 def normalize_script_payload(payload: dict[str, Any]) -> dict[str, Any]:
     title = _safe_text(payload.get("title"), "Shorts о психологии покупок")
     description = _safe_text(
@@ -102,6 +174,7 @@ def normalize_script_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "Короткое объяснение приема из маркетинга и психологии покупок.",
     )
     voice_text = _safe_text(payload.get("voice_text"), "")
+    style_prompt = _safe_text(payload.get("style_prompt"), DEFAULT_STYLE_PROMPT)
 
     raw_scenes = payload.get("scenes")
     if not isinstance(raw_scenes, list):
@@ -112,13 +185,22 @@ def normalize_script_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(scene, dict):
             continue
 
-        text = _safe_text(scene.get("text"), "")
-        if not text:
+        caption = _safe_text(scene.get("caption") or scene.get("text"), "")
+        if not caption:
             continue
+
+        scene_prompt = _safe_text(
+            scene.get("scene_prompt"),
+            (
+                "A visual metaphor for shopping psychology in a bright retail environment, "
+                f"vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
+            ),
+        )
 
         scenes.append(
             {
-                "text": text,
+                "caption": caption,
+                "scene_prompt": _ensure_no_text_prompt(scene_prompt),
                 "duration": _safe_duration(scene.get("duration", 4)),
             }
         )
@@ -127,12 +209,13 @@ def normalize_script_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("OpenAI JSON does not contain valid scenes.")
 
     if not voice_text:
-        voice_text = " ".join(scene["text"] for scene in scenes)
+        voice_text = " ".join(scene["caption"] for scene in scenes)
 
     return {
         "title": title,
         "description": description,
         "voice_text": voice_text,
+        "style_prompt": style_prompt,
         "scenes": scenes,
     }
 
@@ -184,6 +267,7 @@ def main() -> int:
     video_path = OUTPUT_DIR / f"{OUTPUT_STEM}.mp4"
     metadata_path = OUTPUT_DIR / f"{OUTPUT_STEM}.json"
     audio_path = TEMP_DIR / f"{OUTPUT_STEM}.mp3"
+    provider_name = os.getenv("VIDEO_PROVIDER", DEFAULT_VIDEO_PROVIDER)
 
     try:
         print(f"Topic: {TOPIC}")
@@ -196,14 +280,35 @@ def main() -> int:
                 raise
 
             print(f"OpenAI failed, using local fallback script: {exc}")
-            script_payload = dict(FALLBACK_SCRIPT)
+            script_payload = normalize_script_payload(dict(FALLBACK_SCRIPT))
             generation_source = "local_fallback"
+
+        print(f"Generating scene clips with provider: {provider_name}")
+        provider = get_video_provider(provider_name, TEMP_DIR)
+        scene_clip_paths: list[str] = []
+
+        for index, scene in enumerate(script_payload["scenes"], start=1):
+            scene_clip_path = TEMP_DIR / f"{OUTPUT_STEM}_scene_{index:02d}.mp4"
+            provider_prompt = build_provider_scene_prompt(
+                script_payload["style_prompt"],
+                scene["scene_prompt"],
+            )
+            scene_clip_paths.append(
+                provider.generate_scene_video(
+                    scene_prompt=provider_prompt,
+                    duration=scene["duration"],
+                    output_path=str(scene_clip_path),
+                )
+            )
+            scene["provider_prompt"] = provider_prompt
+            scene["clip_path"] = str(scene_clip_path)
 
         print(f"Generating voice-over with {DEFAULT_VOICE}...")
         generate_tts(script_payload["voice_text"], audio_path, voice=DEFAULT_VOICE)
 
-        print("Building vertical video...")
-        build_video(
+        print("Concatenating clips and adding subtitles...")
+        concatenate_clips_with_subtitles(
+            clip_paths=scene_clip_paths,
             scenes=script_payload["scenes"],
             audio_path=audio_path,
             output_path=video_path,
@@ -213,6 +318,7 @@ def main() -> int:
         metadata = {
             "topic": TOPIC,
             "generation_source": generation_source,
+            "video_provider": provider_name,
             "video_path": str(video_path),
             "script": script_payload["voice_text"],
             **script_payload,
