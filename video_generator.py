@@ -12,6 +12,7 @@ try:
         AudioFileClip,
         CompositeVideoClip,
         ImageClip,
+        VideoClip,
         VideoFileClip,
         concatenate_videoclips,
         vfx,
@@ -21,6 +22,7 @@ except ImportError:  # MoviePy 1.x
         AudioFileClip,
         CompositeVideoClip,
         ImageClip,
+        VideoClip,
         VideoFileClip,
         concatenate_videoclips,
         vfx,
@@ -29,6 +31,7 @@ except ImportError:  # MoviePy 1.x
 
 VIDEO_SIZE = (1080, 1920)
 FPS = 30
+CARTOON_FPS = 18
 BACKGROUND = (12, 15, 22)
 TEXT_COLOR = (245, 247, 250)
 SUBTITLE_BOX = (8, 10, 16, 214)
@@ -228,6 +231,306 @@ def create_local_scene_video(
             clip.close()
 
     return str(output_path)
+
+
+def _resample_filter() -> int:
+    if hasattr(Image, "Resampling"):
+        return Image.Resampling.LANCZOS
+    return Image.LANCZOS
+
+
+def _save_transparent(image: Image.Image, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
+
+
+def _draw_customer_asset(path: Path, mood: str) -> None:
+    image = Image.new("RGBA", (520, 720), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    skin = (255, 205, 164, 255)
+    hair = (72, 45, 34, 255)
+    shirt = {
+        "neutral": (85, 196, 255, 255),
+        "surprised": (255, 132, 161, 255),
+        "thinking": (131, 236, 164, 255),
+    }[mood]
+    pants = (42, 50, 67, 255)
+    outline = (24, 29, 39, 255)
+
+    draw.ellipse((155, 55, 365, 265), fill=skin, outline=outline, width=8)
+    draw.pieslice((140, 35, 380, 250), 180, 360, fill=hair)
+    draw.rounded_rectangle((155, 285, 365, 520), radius=45, fill=shirt, outline=outline, width=8)
+    draw.line((175, 330, 70, 470), fill=outline, width=28)
+    draw.line((345, 330, 465, 440), fill=outline, width=28)
+    draw.line((200, 520, 160, 680), fill=pants, width=36)
+    draw.line((320, 520, 360, 680), fill=pants, width=36)
+
+    if mood == "surprised":
+        draw.ellipse((203, 138, 238, 178), fill=(255, 255, 255, 255), outline=outline, width=4)
+        draw.ellipse((282, 138, 317, 178), fill=(255, 255, 255, 255), outline=outline, width=4)
+        draw.ellipse((214, 150, 227, 166), fill=outline)
+        draw.ellipse((293, 150, 306, 166), fill=outline)
+        draw.ellipse((236, 200, 284, 245), fill=(94, 48, 58, 255))
+    elif mood == "thinking":
+        draw.arc((198, 148, 242, 178), 190, 350, fill=outline, width=5)
+        draw.arc((280, 148, 324, 178), 190, 350, fill=outline, width=5)
+        draw.arc((228, 205, 295, 245), 200, 340, fill=outline, width=6)
+    else:
+        draw.ellipse((210, 148, 230, 168), fill=outline)
+        draw.ellipse((292, 148, 312, 168), fill=outline)
+        draw.arc((225, 194, 300, 238), 20, 160, fill=outline, width=6)
+
+    _save_transparent(image, path)
+
+
+def _draw_cart_asset(path: Path) -> None:
+    image = Image.new("RGBA", (430, 320), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    outline = (24, 29, 39, 255)
+    metal = (117, 135, 161, 255)
+
+    draw.line((70, 75, 125, 230), fill=outline, width=16)
+    draw.rounded_rectangle((120, 90, 365, 220), radius=20, outline=outline, width=12, fill=(212, 231, 248, 210))
+    for x in range(150, 350, 45):
+        draw.line((x, 98, x - 20, 214), fill=metal, width=6)
+    for y in (125, 165, 205):
+        draw.line((132, y, 352, y), fill=metal, width=6)
+    draw.line((350, 95, 395, 70), fill=outline, width=14)
+    draw.ellipse((145, 238, 205, 298), fill=(35, 42, 56, 255))
+    draw.ellipse((295, 238, 355, 298), fill=(35, 42, 56, 255))
+
+    _save_transparent(image, path)
+
+
+def _draw_product_asset(path: Path) -> None:
+    image = Image.new("RGBA", (340, 430), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    outline = (24, 29, 39, 255)
+
+    draw.rounded_rectangle((80, 80, 260, 350), radius=28, fill=(255, 190, 92, 255), outline=outline, width=8)
+    draw.rectangle((80, 135, 260, 205), fill=(255, 132, 161, 255))
+    draw.rounded_rectangle((105, 245, 235, 305), radius=16, fill=(245, 247, 250, 255), outline=outline, width=5)
+    draw.rounded_rectangle((190, 40, 310, 120), radius=18, fill=(245, 247, 250, 245), outline=outline, width=6)
+    draw.line((202, 118, 176, 170), fill=outline, width=6)
+
+    _save_transparent(image, path)
+
+
+def _draw_coin_asset(path: Path) -> None:
+    image = Image.new("RGBA", (140, 140), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    draw.ellipse((12, 12, 128, 128), fill=(255, 207, 84, 255), outline=(142, 95, 31, 255), width=8)
+    draw.ellipse((38, 38, 102, 102), outline=(255, 238, 161, 255), width=8)
+
+    _save_transparent(image, path)
+
+
+def _draw_brain_asset(path: Path) -> None:
+    image = Image.new("RGBA", (260, 210), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    outline = (116, 57, 92, 255)
+    pink = (255, 145, 195, 255)
+
+    draw.ellipse((35, 62, 130, 150), fill=pink, outline=outline, width=6)
+    draw.ellipse((95, 38, 185, 135), fill=pink, outline=outline, width=6)
+    draw.ellipse((145, 78, 228, 160), fill=pink, outline=outline, width=6)
+    draw.arc((62, 80, 126, 132), 190, 350, fill=outline, width=5)
+    draw.arc((123, 70, 185, 120), 20, 170, fill=outline, width=5)
+    draw.arc((150, 102, 212, 150), 180, 340, fill=outline, width=5)
+
+    _save_transparent(image, path)
+
+
+def _draw_store_background(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", VIDEO_SIZE, (246, 248, 252))
+    draw = ImageDraw.Draw(image)
+
+    draw.rectangle((0, 0, 1080, 260), fill=(212, 234, 255))
+    draw.rectangle((0, 260, 1080, 1920), fill=(247, 241, 226))
+    draw.polygon([(0, 1920), (1080, 1920), (820, 900), (260, 900)], fill=(237, 226, 206))
+    draw.rectangle((0, 420, 250, 1320), fill=(117, 135, 161))
+    draw.rectangle((830, 420, 1080, 1320), fill=(117, 135, 161))
+
+    shelf_colors = [(255, 190, 92), (131, 236, 164), (85, 196, 255), (255, 132, 161)]
+    for side_x in (20, 850):
+        for row in range(5):
+            y = 480 + row * 155
+            draw.rounded_rectangle((side_x, y, side_x + 210, y + 98), radius=16, fill=(245, 247, 250))
+            for item in range(3):
+                x = side_x + 22 + item * 62
+                draw.rounded_rectangle(
+                    (x, y + 18, x + 42, y + 78),
+                    radius=10,
+                    fill=shelf_colors[(row + item) % len(shelf_colors)],
+                )
+
+    for y in range(1020, 1900, 170):
+        draw.line((210, y, 870, y), fill=(222, 210, 190), width=4)
+
+    image.save(path, quality=95)
+
+
+def ensure_cartoon_assets(assets_root: str | Path) -> dict[str, Path]:
+    root = Path(assets_root)
+    paths = {
+        "background": root / "backgrounds" / "store.png",
+        "customer_neutral": root / "characters" / "customer_neutral.png",
+        "customer_surprised": root / "characters" / "customer_surprised.png",
+        "customer_thinking": root / "characters" / "customer_thinking.png",
+        "cart": root / "props" / "cart.png",
+        "product": root / "props" / "product.png",
+        "coin": root / "props" / "coin.png",
+        "brain": root / "props" / "brain.png",
+    }
+
+    if not paths["background"].exists():
+        _draw_store_background(paths["background"])
+    if not paths["customer_neutral"].exists():
+        _draw_customer_asset(paths["customer_neutral"], "neutral")
+    if not paths["customer_surprised"].exists():
+        _draw_customer_asset(paths["customer_surprised"], "surprised")
+    if not paths["customer_thinking"].exists():
+        _draw_customer_asset(paths["customer_thinking"], "thinking")
+    if not paths["cart"].exists():
+        _draw_cart_asset(paths["cart"])
+    if not paths["product"].exists():
+        _draw_product_asset(paths["product"])
+    if not paths["coin"].exists():
+        _draw_coin_asset(paths["coin"])
+    if not paths["brain"].exists():
+        _draw_brain_asset(paths["brain"])
+
+    return paths
+
+
+def _ease_out(value: float) -> float:
+    value = max(0.0, min(1.0, value))
+    return 1 - (1 - value) ** 3
+
+
+def _bounce(t: float) -> float:
+    return abs(math.sin(t * math.pi * 2.4)) * math.exp(-2.2 * t)
+
+
+def _with_alpha(image: Image.Image, alpha: float) -> Image.Image:
+    alpha = max(0.0, min(1.0, alpha))
+    result = image.copy()
+    if result.mode != "RGBA":
+        result = result.convert("RGBA")
+    channel = result.getchannel("A")
+    channel = channel.point(lambda value: int(value * alpha))
+    result.putalpha(channel)
+    return result
+
+
+def _asset(image_path: Path, size: tuple[int, int]) -> Image.Image:
+    return Image.open(image_path).convert("RGBA").resize(size, _resample_filter())
+
+
+def _choose_customer_asset(scene_prompt: str, assets: dict[str, Path]) -> Path:
+    lowered = scene_prompt.lower()
+    if any(word in lowered for word in ("surprised", "reacts", "discount", "shocked")):
+        return assets["customer_surprised"]
+    if any(word in lowered for word in ("think", "thinking", "pause", "calm", "brain", "psychology", "eyes")):
+        return assets["customer_thinking"]
+    return assets["customer_neutral"]
+
+
+def _paste_rgba(base: Image.Image, overlay: Image.Image, xy: tuple[int, int]) -> None:
+    base.alpha_composite(overlay, dest=xy)
+
+
+def _zoom_frame(frame: Image.Image, zoom: float) -> Image.Image:
+    if zoom <= 1.001:
+        return frame
+
+    width, height = frame.size
+    crop_width = int(width / zoom)
+    crop_height = int(height / zoom)
+    left = (width - crop_width) // 2
+    top = (height - crop_height) // 2
+    cropped = frame.crop((left, top, left + crop_width, top + crop_height))
+    return cropped.resize((width, height), _resample_filter())
+
+
+def create_cartoon_scene_video(
+    scene_prompt: str,
+    duration: int,
+    output_path: str | Path,
+    assets_root: str | Path,
+) -> str:
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    assets = ensure_cartoon_assets(assets_root)
+
+    render_size = (540, 960)
+    scale = render_size[0] / VIDEO_SIZE[0]
+    background = Image.open(assets["background"]).convert("RGBA").resize(render_size, _resample_filter())
+    customer = _asset(_choose_customer_asset(scene_prompt, assets), (215, 298))
+    cart = _asset(assets["cart"], (175, 130))
+    product = _asset(assets["product"], (140, 178))
+    coin = _asset(assets["coin"], (44, 44))
+    brain = _asset(assets["brain"], (105, 85))
+
+    lowered = scene_prompt.lower()
+    show_brain = any(word in lowered for word in ("think", "brain", "psychology", "eyes", "calm", "pause"))
+    show_many_coins = "coin" in lowered or "money" in lowered or "price" in lowered
+
+    def make_frame(t: float) -> Any:
+        import numpy as np
+
+        progress = max(0.0, min(1.0, t / max(duration, 0.1)))
+        eased = _ease_out(min(progress * 2.2, 1.0))
+        frame = background.copy()
+
+        customer_x = int((-390 + 500 * eased) * scale)
+        customer_y = int((760 + int(math.sin(t * 3.2) * 7)) * scale)
+        product_bounce = int(-34 * _bounce(min(progress * 2.3, 1.0)) * scale)
+        product_x = int(650 * scale)
+        product_y = int(790 * scale) + product_bounce
+        cart_x = int((500 + int(20 * math.sin(t * 1.4))) * scale)
+        cart_y = int(1270 * scale)
+
+        _paste_rgba(frame, cart, (cart_x, cart_y))
+        _paste_rgba(frame, product, (product_x, product_y))
+        _paste_rgba(frame, customer, (customer_x, customer_y))
+
+        coin_count = 4 if show_many_coins else 2
+        for index in range(coin_count):
+            coin_x = int((670 + index * 82 + int(math.sin(t * 2.0 + index) * 22)) * scale)
+            fall = (progress * 900 + index * 140) % 900
+            coin_y = int((230 + fall) * scale)
+            _paste_rgba(frame, coin, (coin_x, coin_y))
+
+        if show_brain or progress > 0.45:
+            alpha = _ease_out((progress - 0.25) / 0.4)
+            brain_y = int((520 + int(math.sin(t * 2.6) * 10)) * scale)
+            _paste_rgba(frame, _with_alpha(brain, alpha), (int(650 * scale), brain_y))
+
+        zoom = 1.0 + 0.045 * progress
+        frame = _zoom_frame(frame, zoom).resize(VIDEO_SIZE, _resample_filter()).convert("RGB")
+        return np.array(frame)
+
+    clip = None
+    try:
+        clip = VideoClip(frame_function=make_frame, duration=float(duration))
+        clip = _clip_with_fps(clip, CARTOON_FPS)
+        clip.write_videofile(
+            str(output),
+            fps=CARTOON_FPS,
+            codec="libx264",
+            audio=False,
+            threads=4,
+            logger=None,
+        )
+    finally:
+        if clip is not None:
+            clip.close()
+
+    return str(output)
 
 
 def _create_subtitle_overlay(caption: str, output_path: Path) -> Path:

@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 *.pyc
+assets/generated/
 temp/*
 outputs/*
 !temp/.gitkeep

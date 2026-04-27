@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-from video_generator import create_local_scene_video
+from video_generator import create_cartoon_scene_video, create_local_scene_video
 
 
 DEFAULT_LUMA_API_BASE_URL = "https://api.lumalabs.ai/dream-machine/v1"
@@ -33,6 +33,21 @@ class LocalSimpleProvider(VideoProvider):
             scene_prompt=scene_prompt,
             duration=duration,
             output_path=output_path,
+        )
+
+
+class CartoonAssetsProvider(VideoProvider):
+    """Local 2D cartoon provider based on generated Pillow assets."""
+
+    def __init__(self, assets_root: str | Path):
+        self.assets_root = Path(assets_root)
+
+    def generate_scene_video(self, scene_prompt: str, duration: int, output_path: str) -> str:
+        return create_cartoon_scene_video(
+            scene_prompt=scene_prompt,
+            duration=duration,
+            output_path=output_path,
+            assets_root=self.assets_root,
         )
 
 
@@ -204,6 +219,9 @@ def get_video_provider(provider_name: str, temp_dir: str | Path) -> VideoProvide
     if normalized == "local_simple":
         return LocalSimpleProvider()
 
+    if normalized == "cartoon_assets":
+        return CartoonAssetsProvider(assets_root=Path(temp_dir).parent / "assets" / "generated")
+
     if normalized in {"stub_ai", "stub"}:
         return StubAIProvider(prompt_log_dir=Path(temp_dir) / "provider_prompts")
 
@@ -212,5 +230,5 @@ def get_video_provider(provider_name: str, temp_dir: str | Path) -> VideoProvide
 
     raise ValueError(
         f"Unknown VIDEO_PROVIDER={provider_name!r}. "
-        "Supported providers: local_simple, stub_ai, luma."
+        "Supported providers: local_simple, cartoon_assets, stub_ai, luma."
     )

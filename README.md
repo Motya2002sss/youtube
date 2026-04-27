@@ -46,11 +46,12 @@ LUMA_API_BASE_URL=
 
 `VIDEO_PROVIDER` сейчас поддерживает:
 
-- `local_simple` - локальный fallback на Pillow/MoviePy.
+- `local_simple` - технический fallback на Pillow/MoviePy.
+- `cartoon_assets` - локальный мультяшный режим без внешнего AI-video, собирает 2D-сцены из PNG-ассетов.
 - `stub_ai` - заглушка под будущие Runway/Luma: сохраняет prompt сцены в JSON и использует `local_simple` для клипа.
-- `luma` - реальный provider для Luma Dream Machine API. Если provider падает, pipeline пишет `provider_error` в metadata и использует `local_simple` как fallback.
+- `luma` - будущий/внешний AI-video provider для настоящих нейросетевых мультяшных клипов.
 
-`local_simple` нужен только как fallback и для проверки pipeline. Для настоящего мультяшного результата нужен внешний AI-video provider, например Luma.
+`local_simple` нужен только как fallback и для проверки pipeline. Для локального мультяшного результата используйте `cartoon_assets`. Для более качественного AI-video результата нужен внешний provider, например Luma.
 
 ## Запуск local_simple
 
@@ -61,6 +62,29 @@ VIDEO_PROVIDER=local_simple
 ```bash
 python main.py
 ```
+
+## Запуск cartoon_assets
+
+```env
+VIDEO_PROVIDER=cartoon_assets
+```
+
+```bash
+python main.py
+```
+
+Если PNG-ассетов нет, provider автоматически создаст их в `assets/generated`:
+
+- `backgrounds/store.png`
+- `characters/customer_neutral.png`
+- `characters/customer_surprised.png`
+- `characters/customer_thinking.png`
+- `props/cart.png`
+- `props/product.png`
+- `props/coin.png`
+- `props/brain.png`
+
+Этот режим рендерит 2D cartoon композицию: магазин, покупатель, товар, корзина, ценники, мозг/мысль, стрелки и монеты. Текст ролика всё равно добавляется отдельно как subtitles и controlled overlays.
 
 ## Включение Luma
 
@@ -128,8 +152,8 @@ topic
 - `main.py` - точка входа: тема, OpenAI, TTS, сборка видео, сохранение JSON.
 - `prompts.py` - промпты для генерации сценария.
 - `tts.py` - генерация MP3 через `edge-tts`.
-- `video_provider.py` - интерфейс `VideoProvider`, `LocalSimpleProvider`, `StubAIProvider`.
-- `video_generator.py` - локальная генерация fallback-клипов, склейка MP4 и наложение subtitles через Pillow/MoviePy.
+- `video_provider.py` - интерфейс `VideoProvider`, `LocalSimpleProvider`, `CartoonAssetsProvider`, `StubAIProvider`.
+- `video_generator.py` - локальная генерация fallback/cartoon-клипов, склейка MP4 и наложение subtitles через Pillow/MoviePy.
 - `assets/` - папка для будущих шрифтов, фоновых картинок, музыки.
 - `outputs/` - готовые видео и метаданные.
 - `temp/` - временные изображения сцен и аудио.
