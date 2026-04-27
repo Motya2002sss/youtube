@@ -38,7 +38,7 @@ cp .env.example .env
 ```env
 OPENAI_API_KEY=your_real_api_key_here
 OPENAI_MODEL=gpt-4o-mini
-VIDEO_PROVIDER=local_simple
+VIDEO_PROVIDER=cartoon_assets
 RUNWAY_API_KEY=
 LUMA_API_KEY=
 LUMA_API_BASE_URL=
