@@ -274,6 +274,99 @@ def _create_subtitle_overlay(caption: str, output_path: Path) -> Path:
     return output_path
 
 
+def _draw_price_card(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[int, int, int, int],
+    text: str,
+    accent: tuple[int, int, int],
+) -> None:
+    x1, y1, x2, y2 = xy
+    draw.rounded_rectangle((x1, y1, x2, y2), radius=34, fill=(246, 248, 252, 245))
+    draw.rounded_rectangle((x1, y1, x2, y2), radius=34, outline=accent, width=6)
+
+    font = _load_font(86, bold=True)
+    width, height = _text_size(draw, text, font)
+    draw.text(
+        (x1 + ((x2 - x1) - width) // 2, y1 + ((y2 - y1) - height) // 2 - 8),
+        text,
+        font=font,
+        fill=(18, 23, 34, 255),
+    )
+
+
+def _draw_arrow(
+    draw: ImageDraw.ImageDraw,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    color: tuple[int, int, int],
+) -> None:
+    draw.line((start, end), fill=(*color, 245), width=18)
+    ex, ey = end
+    draw.polygon(
+        [(ex, ey), (ex - 46, ey - 30), (ex - 42, ey + 38)],
+        fill=(*color, 245),
+    )
+
+
+def _create_controlled_overlay(scene: dict[str, Any], output_path: Path) -> Path | None:
+    overlay_type = str(scene.get("overlay_type", "")).strip().lower()
+    if not overlay_type:
+        return None
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGBA", VIDEO_SIZE, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    accent = (255, 190, 92)
+
+    if overlay_type == "price_comparison":
+        _draw_price_card(draw, (104, 350, 500, 530), "999 ₽", (98, 213, 159))
+        _draw_price_card(draw, (580, 350, 976, 530), "1000 ₽", (255, 132, 161))
+        _draw_arrow(draw, (520, 438), (568, 438), accent)
+
+    elif overlay_type == "price_999":
+        _draw_price_card(draw, (300, 330, 780, 530), "999 ₽", (98, 213, 159))
+
+    elif overlay_type == "price_1000":
+        _draw_price_card(draw, (290, 330, 790, 530), "1000 ₽", (255, 132, 161))
+
+    elif overlay_type == "arrow":
+        _draw_arrow(draw, (260, 430), (820, 430), accent)
+
+    elif overlay_type == "small_label":
+        label = str(scene.get("overlay_label") or "Смотри на сумму").strip()
+        font, lines, line_height = _fit_text(
+            draw,
+            label,
+            max_width=760,
+            max_height=120,
+            max_font_size=44,
+            min_font_size=32,
+        )
+        box_left = 170
+        box_top = 350
+        box_right = 910
+        box_bottom = 500
+        draw.rounded_rectangle(
+            (box_left, box_top, box_right, box_bottom),
+            radius=26,
+            fill=(8, 10, 16, 225),
+            outline=(*accent, 230),
+            width=3,
+        )
+        total_height = len(lines) * line_height
+        y = box_top + ((box_bottom - box_top) - total_height) // 2
+        for line in lines:
+            width, _ = _text_size(draw, line, font)
+            draw.text(((VIDEO_SIZE[0] - width) // 2, y), line, font=font, fill=TEXT_COLOR)
+            y += line_height
+
+    else:
+        return None
+
+    image.save(output_path)
+    return output_path
+
+
 def concatenate_clips_with_subtitles(
     clip_paths: list[str | Path],
     scenes: list[dict[str, Any]],
@@ -295,8 +388,13 @@ def concatenate_clips_with_subtitles(
     final_clip = None
 
     try:
-        for clip_path in clip_paths:
-            scene_clips.append(VideoFileClip(str(clip_path)))
+        if len(clip_paths) != len(scenes):
+            raise ValueError("clip_paths and scenes must have the same length.")
+
+        for clip_path, scene in zip(clip_paths, scenes):
+            scene_clip = VideoFileClip(str(clip_path))
+            scene_clip = _clip_with_duration(scene_clip, float(scene.get("duration", 4)))
+            scene_clips.append(scene_clip)
 
         base_clip = concatenate_videoclips(scene_clips, method="compose")
         timeline = 0.0
@@ -304,6 +402,22 @@ def concatenate_clips_with_subtitles(
         for index, scene in enumerate(scenes):
             caption = str(scene.get("caption") or scene.get("text") or "").strip()
             duration = float(scene.get("duration", 4))
+
+            controlled_overlay_path = _create_controlled_overlay(
+                scene,
+                temp_dir / f"controlled_overlay_{index + 1:02d}.png",
+            )
+            if controlled_overlay_path is not None:
+                try:
+                    controlled_overlay = ImageClip(str(controlled_overlay_path), transparent=True)
+                except TypeError:
+                    controlled_overlay = ImageClip(str(controlled_overlay_path))
+
+                controlled_overlay = _clip_with_start(controlled_overlay, timeline)
+                controlled_overlay = _clip_with_duration(controlled_overlay, duration)
+                controlled_overlay = _clip_with_position(controlled_overlay, ("center", "center"))
+                overlays.append(controlled_overlay)
+
             if not caption:
                 timeline += duration
                 continue

@@ -12,7 +12,7 @@ from openai import OpenAI
 from prompts import SYSTEM_PROMPT, build_user_prompt
 from tts import DEFAULT_VOICE, generate_tts
 from video_generator import concatenate_clips_with_subtitles
-from video_provider import get_video_provider
+from video_provider import LocalSimpleProvider, get_video_provider
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -24,8 +24,9 @@ OUTPUT_STEM = "short_001"
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_VIDEO_PROVIDER = "local_simple"
 DEFAULT_STYLE_PROMPT = (
-    "3D cartoon style, colorful commercial video, vertical 9:16, smooth camera movement, "
-    "bright retail and money psychology visuals, consistent characters and lighting"
+    "consistent 3D cartoon style, same young shopper character, bright supermarket, "
+    "expressive face, colorful simple animation, vertical 9:16, smooth camera movement, "
+    "no text, no letters, no numbers, no subtitles, no logos"
 )
 NO_TEXT_PROMPT = "no text, no letters, no numbers, no subtitles, no logos"
 FALLBACK_SCRIPT = {
@@ -50,6 +51,7 @@ FALLBACK_SCRIPT = {
                 f"price tag, colorful, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
             ),
             "duration": 4,
+            "overlay_type": "price_comparison",
         },
         {
             "caption": "Мозг читает цену слева",
@@ -58,6 +60,7 @@ FALLBACK_SCRIPT = {
                 f"psychology mood, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
             ),
             "duration": 4,
+            "overlay_type": "arrow",
         },
         {
             "caption": "Первая цифра решает ощущение",
@@ -66,6 +69,7 @@ FALLBACK_SCRIPT = {
                 f"emotionally, colorful store background, vertical video, {NO_TEXT_PROMPT}"
             ),
             "duration": 5,
+            "overlay_type": "small_label",
         },
         {
             "caption": "1000 звучит как крупная сумма",
@@ -74,6 +78,7 @@ FALLBACK_SCRIPT = {
                 f"basket, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
             ),
             "duration": 5,
+            "overlay_type": "price_1000",
         },
         {
             "caption": "999 выглядит почти выгодно",
@@ -82,6 +87,7 @@ FALLBACK_SCRIPT = {
                 f"supermarket aisle, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
             ),
             "duration": 5,
+            "overlay_type": "price_999",
         },
         {
             "caption": "Разница всего один рубль",
@@ -90,6 +96,7 @@ FALLBACK_SCRIPT = {
                 f"between them, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
             ),
             "duration": 4,
+            "overlay_type": "price_comparison",
         },
         {
             "caption": "Смотри на реальную сумму",
@@ -98,6 +105,7 @@ FALLBACK_SCRIPT = {
                 f"colorful retail scene, vertical video, smooth camera movement, {NO_TEXT_PROMPT}"
             ),
             "duration": 5,
+            "overlay_type": "small_label",
         },
     ],
 }
@@ -202,6 +210,7 @@ def normalize_script_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "caption": caption,
                 "scene_prompt": _ensure_no_text_prompt(scene_prompt),
                 "duration": _safe_duration(scene.get("duration", 4)),
+                "overlay_type": _safe_text(scene.get("overlay_type"), ""),
             }
         )
 
@@ -267,7 +276,9 @@ def main() -> int:
     video_path = OUTPUT_DIR / f"{OUTPUT_STEM}.mp4"
     metadata_path = OUTPUT_DIR / f"{OUTPUT_STEM}.json"
     audio_path = TEMP_DIR / f"{OUTPUT_STEM}.mp3"
-    provider_name = os.getenv("VIDEO_PROVIDER", DEFAULT_VIDEO_PROVIDER)
+    requested_provider_name = os.getenv("VIDEO_PROVIDER", DEFAULT_VIDEO_PROVIDER).strip().lower()
+    effective_provider_name = requested_provider_name
+    provider_errors: list[str] = []
 
     try:
         print(f"Topic: {TOPIC}")
@@ -283,8 +294,18 @@ def main() -> int:
             script_payload = normalize_script_payload(dict(FALLBACK_SCRIPT))
             generation_source = "local_fallback"
 
-        print(f"Generating scene clips with provider: {provider_name}")
-        provider = get_video_provider(provider_name, TEMP_DIR)
+        print(f"Generating scene clips with provider: {requested_provider_name}")
+        try:
+            provider = get_video_provider(requested_provider_name, TEMP_DIR)
+        except Exception as exc:
+            if requested_provider_name != "luma":
+                raise
+
+            provider_errors.append(str(exc))
+            provider = LocalSimpleProvider()
+            effective_provider_name = "local_simple"
+            print(f"Luma provider unavailable, falling back to local_simple: {exc}")
+
         scene_clip_paths: list[str] = []
 
         for index, scene in enumerate(script_payload["scenes"], start=1):
@@ -293,13 +314,32 @@ def main() -> int:
                 script_payload["style_prompt"],
                 scene["scene_prompt"],
             )
-            scene_clip_paths.append(
-                provider.generate_scene_video(
+
+            try:
+                clip_path = provider.generate_scene_video(
                     scene_prompt=provider_prompt,
                     duration=scene["duration"],
                     output_path=str(scene_clip_path),
                 )
-            )
+                scene["clip_provider"] = effective_provider_name
+            except Exception as exc:
+                if requested_provider_name != "luma":
+                    raise
+
+                error_message = f"scene {index}: {exc}"
+                provider_errors.append(error_message)
+                print(f"Luma scene generation failed, falling back to local_simple: {error_message}")
+                provider = LocalSimpleProvider()
+                effective_provider_name = "local_simple"
+                clip_path = provider.generate_scene_video(
+                    scene_prompt=provider_prompt,
+                    duration=scene["duration"],
+                    output_path=str(scene_clip_path),
+                )
+                scene["clip_provider"] = "local_simple"
+                scene["provider_error"] = error_message
+
+            scene_clip_paths.append(clip_path)
             scene["provider_prompt"] = provider_prompt
             scene["clip_path"] = str(scene_clip_path)
 
@@ -318,11 +358,15 @@ def main() -> int:
         metadata = {
             "topic": TOPIC,
             "generation_source": generation_source,
-            "video_provider": provider_name,
+            "requested_video_provider": requested_provider_name,
+            "video_provider": effective_provider_name,
             "video_path": str(video_path),
             "script": script_payload["voice_text"],
             **script_payload,
         }
+        if provider_errors:
+            metadata["provider_error"] = provider_errors
+
         save_metadata(metadata, metadata_path)
 
         print(f"Done: {video_path}")

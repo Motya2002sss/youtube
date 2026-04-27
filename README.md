@@ -41,14 +41,40 @@ OPENAI_MODEL=gpt-4o-mini
 VIDEO_PROVIDER=local_simple
 RUNWAY_API_KEY=
 LUMA_API_KEY=
+LUMA_API_BASE_URL=
 ```
 
 `VIDEO_PROVIDER` сейчас поддерживает:
 
 - `local_simple` - локальный fallback на Pillow/MoviePy.
 - `stub_ai` - заглушка под будущие Runway/Luma: сохраняет prompt сцены в JSON и использует `local_simple` для клипа.
+- `luma` - реальный provider для Luma Dream Machine API. Если provider падает, pipeline пишет `provider_error` в metadata и использует `local_simple` как fallback.
 
-Реальные API Runway/Luma пока не подключены.
+`local_simple` нужен только как fallback и для проверки pipeline. Для настоящего мультяшного результата нужен внешний AI-video provider, например Luma.
+
+## Запуск local_simple
+
+```env
+VIDEO_PROVIDER=local_simple
+```
+
+```bash
+python main.py
+```
+
+## Включение Luma
+
+Добавьте ключ Luma в `.env`:
+
+```env
+VIDEO_PROVIDER=luma
+LUMA_API_KEY=your_luma_api_key_here
+LUMA_API_BASE_URL=https://api.lumalabs.ai/dream-machine/v1
+```
+
+`LUMA_API_BASE_URL` можно оставить пустым, тогда используется default URL из кода. Provider отправляет `scene_prompt` во внешний API, ждёт готовность генерации, скачивает mp4-клип сцены в `temp`, после чего общий pipeline склеивает клипы и накладывает subtitles/controlled overlays.
+
+Если `LUMA_API_KEY` не задан, `LumaProvider` падает с понятной ошибкой. Если выбран `VIDEO_PROVIDER=luma`, верхний pipeline перехватывает ошибку, использует `local_simple` и записывает `provider_error` в JSON metadata.
 
 ## Запуск
 
@@ -80,11 +106,22 @@ topic
 -> video provider generates scene clips
 -> edge-tts generates voice-over
 -> clips are concatenated
--> captions/subtitles are rendered by Pillow and composited over video
+-> controlled overlays and captions/subtitles are rendered by Pillow and composited over video
 -> final mp4 + metadata JSON are saved to outputs
 ```
 
-Важно: `scene_prompt` не должен просить AI-video модель рисовать текст, буквы, цифры, логотипы или субтитры. Текст для зрителя хранится в `caption` и добавляется самим Python поверх видео.
+Важно: `scene_prompt` не должен просить AI-video модель рисовать текст, буквы, цифры, логотипы или субтитры. Текст для зрителя хранится в `caption`, а управляемые элементы вроде `999 ₽ vs 1000 ₽` задаются через `overlay_type` и добавляются самим Python поверх видео.
+
+Пример сцены:
+
+```json
+{
+  "caption": "999 выглядит почти выгодно",
+  "scene_prompt": "a young shopper in a bright supermarket aisle looking surprised at a product with a blank price tag, colorful, vertical video, smooth camera movement, no text, no letters, no numbers, no subtitles, no logos",
+  "duration": 4,
+  "overlay_type": "price_comparison"
+}
+```
 
 ## Как устроен проект
 
