@@ -39,6 +39,7 @@ cp .env.example .env
 OPENAI_API_KEY=your_real_api_key_here
 OPENAI_MODEL=gpt-4o-mini
 VIDEO_PROVIDER=cartoon_assets
+FAL_KEY=
 RUNWAY_API_KEY=
 LUMA_API_KEY=
 LUMA_API_BASE_URL=
@@ -85,6 +86,33 @@ python main.py
 - `props/brain.png`
 
 Этот режим рендерит 2D cartoon композицию: магазин, покупатель, товар, корзина, ценники, мозг/мысль, стрелки и монеты. Текст ролика всё равно добавляется отдельно как subtitles и controlled overlays.
+
+## Smoke test Fal.ai / Pika
+
+Перед включением Fal/Pika в основной pipeline сначала проверьте ключ и баланс отдельным коротким тестом:
+
+```env
+FAL_KEY=your_real_fal_key_here
+```
+
+Установите зависимости и запустите smoke test:
+
+```bash
+py -3 -m pip install -r requirements.txt
+py -3 test_fal.py
+```
+
+`test_fal.py` использует endpoint `fal-ai/pika/v2.1/text-to-video`: сначала проверяет pricing/access через Fal API без генерации, затем делает ровно один короткий 5-секундный text-to-video запрос и сохраняет результат в `outputs/fal_test.mp4`.
+
+Pika через Fal.ai стоит денег/кредитов. Не запускайте полный pipeline с Fal/Pika, пока `test_fal.py` не подтвердит, что ключ принят, billing/credits доступны и один mp4 реально скачался.
+
+После успешного smoke test и добавления `FalPikaProvider` в код включение делается так:
+
+```env
+VIDEO_PROVIDER=fal_pika
+```
+
+Если Fal возвращает ошибку про auth, credits или billing, исправьте ключ или пополните баланс перед запуском основного pipeline.
 
 ## Включение Luma
 

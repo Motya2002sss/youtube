@@ -1,5 +1,6 @@
 openai
 edge-tts
+fal-client
 moviepy
 pillow
 python-dotenv
